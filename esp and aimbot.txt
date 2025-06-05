@@ -1,8 +1,6 @@
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 local lp = Players.LocalPlayer
@@ -14,7 +12,7 @@ local holdingRightClick = false
 local aimRadius = 500
 local aimPart = "Head"
 local espData = {}
-local targets = {}
+local targets = {} -- players + NPCs
 
 -- Fullbright
 local function enableFullbright()
@@ -25,7 +23,6 @@ local function enableFullbright()
 	Lighting.ClockTime = 14
 	Lighting.FogEnd = 100000
 end
-
 enableFullbright()
 
 local skeletonJoints = {
@@ -56,66 +53,63 @@ local function clearDrawings(obj)
 end
 
 local function createESP(obj)
+	-- Clear old drawings before creating new ones (fixes stuck ESP)
+	clearDrawings(obj)
 	espData[obj] = {}
 
-	local function draw()
-		clearDrawings(obj)
-		if not espEnabled then return end
-		if not obj or not obj:FindFirstChild("HumanoidRootPart") then return end
-		if not obj:FindFirstChild("Humanoid") then return end
+	if not espEnabled then return end
+	if not obj or not obj:FindFirstChild("HumanoidRootPart") then return end
+	if not obj:FindFirstChild("Humanoid") then return end
 
-		local hrp = obj.HumanoidRootPart
-		local humanoid = obj.Humanoid
-		local pos, onScreen = WorldToScreen(hrp.Position)
-		if not onScreen then return end
+	local hrp = obj.HumanoidRootPart
+	local humanoid = obj.Humanoid
+	local pos, onScreen = WorldToScreen(hrp.Position)
+	if not onScreen then return end
 
-		local dist = (lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") and (lp.Character.HumanoidRootPart.Position - hrp.Position).Magnitude) or 0
-		local size = 1000 / dist
+	local dist = (lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") and (lp.Character.HumanoidRootPart.Position - hrp.Position).Magnitude) or 0
 
-		local box = Drawing.new("Square")
-		box.Size = Vector2.new(size, size * 1.5)
-		box.Position = Vector2.new(pos.X - size / 2, pos.Y - size * 0.75)
-		box.Color = ESPColor
-		box.Thickness = 1
-		box.Filled = false
-		box.Transparency = 1
-		box.Visible = true
-		table.insert(espData[obj], box)
+	local size = 1000 / dist
+	local box = Drawing.new("Square")
+	box.Size = Vector2.new(size, size * 1.5)
+	box.Position = Vector2.new(pos.X - size / 2, pos.Y - size * 0.75)
+	box.Color = ESPColor
+	box.Thickness = 1
+	box.Filled = false
+	box.Transparency = 1
+	box.Visible = true
+	table.insert(espData[obj], box)
 
-		local tag = Drawing.new("Text")
-		tag.Text = string.format("%s [%.0f] HP: %d", obj.Name, dist, math.floor(humanoid.Health))
-		tag.Position = Vector2.new(pos.X, pos.Y - size)
-		tag.Color = ESPColor
-		tag.Size = 14
-		tag.Center = true
-		tag.Outline = true
-		tag.Visible = true
-		table.insert(espData[obj], tag)
+	local tag = Drawing.new("Text")
+	tag.Text = string.format("%s [%.0f] HP: %d", obj.Name, dist, math.floor(humanoid.Health))
+	tag.Position = Vector2.new(pos.X, pos.Y - size)
+	tag.Color = ESPColor
+	tag.Size = 14
+	tag.Center = true
+	tag.Outline = true
+	tag.Visible = true
+	table.insert(espData[obj], tag)
 
-		for _, pair in ipairs(skeletonJoints) do
-			local part1 = obj:FindFirstChild(pair[1])
-			local part2 = obj:FindFirstChild(pair[2])
-			if part1 and part2 then
-				local p1, on1 = WorldToScreen(part1.Position)
-				local p2, on2 = WorldToScreen(part2.Position)
-				if on1 and on2 then
-					local line = Drawing.new("Line")
-					line.From = Vector2.new(p1.X, p1.Y)
-					line.To = Vector2.new(p2.X, p2.Y)
-					line.Color = ESPColor
-					line.Thickness = 1
-					line.Transparency = 1
-					line.Visible = true
-					table.insert(espData[obj], line)
-				end
+	for _, pair in ipairs(skeletonJoints) do
+		local part1 = obj:FindFirstChild(pair[1])
+		local part2 = obj:FindFirstChild(pair[2])
+		if part1 and part2 then
+			local p1, on1 = WorldToScreen(part1.Position)
+			local p2, on2 = WorldToScreen(part2.Position)
+			if on1 and on2 then
+				local line = Drawing.new("Line")
+				line.From = Vector2.new(p1.X, p1.Y)
+				line.To = Vector2.new(p2.X, p2.Y)
+				line.Color = ESPColor
+				line.Thickness = 1
+				line.Transparency = 1
+				line.Visible = true
+				table.insert(espData[obj], line)
 			end
 		end
 	end
-
-	return draw
 end
 
--- Update targets
+-- Update targets (players + NPCs)
 local function updateTargets()
 	targets = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -130,36 +124,85 @@ local function updateTargets()
 	end
 end
 
--- ESP manager
+-- FOV Circle setup
+local fovCircle = Drawing.new("Circle")
+fovCircle.Radius = aimRadius
+fovCircle.Color = ESPColor
+fovCircle.Filled = false
+fovCircle.Thickness = 1
+fovCircle.Transparency = 1
+fovCircle.Visible = true
+
+-- Track ESPs
 local espFuncs = {}
+
+-- Draggable UI creation
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ESP_UI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game.CoreGui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 220, 0, 120)
+Frame.Position = UDim2.new(0.02, 0, 0.3, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Frame.BorderSizePixel = 0
+Frame.Parent = ScreenGui
+Frame.Active = true
+Frame.Draggable = true
+
+local function createLabel(text, posY)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -10, 0, 20)
+	label.Position = UDim2.new(0, 5, 0, posY)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Text = text
+	label.Font = Enum.Font.SourceSans
+	label.TextSize = 16
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = Frame
+	return label
+end
+
+createLabel("ESP: Ctrl + Z", 5)
+createLabel("Aimbot: Ctrl + X + Hold Right Click", 30)
+createLabel("Toggle UI: P", 55)
+
+-- Toggle UI visibility with P
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.P then
+		ScreenGui.Enabled = not ScreenGui.Enabled
+	end
+end)
+
 local function refreshESP()
 	updateTargets()
+
+	-- Clear ESP for any objects that no longer exist or if ESP is off
+	for obj in pairs(espData) do
+		if not table.find(targets, obj) or not espEnabled then
+			clearDrawings(obj)
+		end
+	end
+
 	for _, target in pairs(targets) do
-		if not espFuncs[target] then
-			espFuncs[target] = createESP(target)
+		if espEnabled then
+			createESP(target)
+		else
+			clearDrawings(target)
 		end
 	end
 end
 
-local fovCircle = Drawing.new("Circle")
-fovCircle.Color = Color3.fromRGB(255, 255, 255)
-fovCircle.Thickness = 1
-fovCircle.NumSides = 100
-fovCircle.Filled = false
-fovCircle.Radius = aimRadius
-fovCircle.Transparency = 1
-fovCircle.Visible = false
-
 RunService.RenderStepped:Connect(function()
 	refreshESP()
-	for obj, drawFunc in pairs(espFuncs) do
-		pcall(drawFunc)
-	end
 
+	-- Update FOV circle position to mouse
 	local mousePos = Vector2.new(lp:GetMouse().X, lp:GetMouse().Y)
 	fovCircle.Position = mousePos
-	fovCircle.Radius = aimRadius
-	fovCircle.Visible = aimbotEnabled
+	fovCircle.Visible = espEnabled
 
 	if aimbotEnabled and holdingRightClick then
 		local closest = nil
@@ -180,18 +223,27 @@ RunService.RenderStepped:Connect(function()
 		if closest then
 			Camera.CFrame = CFrame.new(Camera.CFrame.Position, closest.Position)
 		end
+	else
+		-- Do nothing
 	end
 end)
 
--- Toggle keys
+-- ESP toggle: Ctrl + Z
 UserInputService.InputBegan:Connect(function(input, gp)
 	if gp then return end
 	if input.KeyCode == Enum.KeyCode.Z and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
 		espEnabled = not espEnabled
-		for obj in pairs(espData) do
-			clearDrawings(obj)
+		if not espEnabled then
+			for obj in pairs(espData) do
+				clearDrawings(obj)
+			end
 		end
 	end
+end)
+
+-- Aimbot toggle: Ctrl + X
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
 	if input.KeyCode == Enum.KeyCode.X and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
 		aimbotEnabled = not aimbotEnabled
 	end
@@ -206,36 +258,12 @@ UserInputService.InputEnded:Connect(function(input, gp)
 	end
 end)
 
--- ESP auto add
+-- Auto add players on join
 Players.PlayerAdded:Connect(function(plr)
 	plr.CharacterAdded:Connect(function(char)
 		wait(1)
-		if not espFuncs[char] then
-			espFuncs[char] = createESP(char)
+		if not espData[char] then
+			createESP(char)
 		end
 	end)
-end)
-
--- Draggable UI
-local gui = Instance.new("ScreenGui", game:GetService("CoreGui"))
-gui.Name = "ESP_UI"
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 220, 0, 110)
-frame.Position = UDim2.new(0, 30, 0, 30)
-frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
-frame.Active = true
-frame.Draggable = true
-
-local info = Instance.new("TextLabel", frame)
-info.Size = UDim2.new(1, 0, 1, 0)
-info.Text = "Ctrl + Z = Toggle ESP\nCtrl + X = Toggle Aimbot\nHold Right Click = Aim\nP = Show/Hide UI"
-info.TextColor3 = Color3.new(1,1,1)
-info.BackgroundTransparency = 1
-info.TextWrapped = true
-info.TextScaled = true
-
-UserInputService.InputBegan:Connect(function(input, gp)
-	if input.KeyCode == Enum.KeyCode.P then
-		frame.Visible = not frame.Visible
-	end
 end)
